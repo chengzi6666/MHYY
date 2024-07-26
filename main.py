@@ -1,7 +1,5 @@
 import json
 import os
-import random
-import time
 import base64
 
 import rsa
@@ -127,48 +125,36 @@ for config in conf:
     }
     ses = login(str(account), str(password), headers)
     ses.headers.update(headers)
-    wait_time = random.randint(1, 180) # Random Sleep to Avoid Ban
-    print(f'开始休眠 {wait_time} s')
-    time.sleep(wait_time)
-    wallet = ses.get(WALLET)
-    if wallet.json()['retcode'] == -100:  # {"data": None,"message": "登录已失效，请重新登录", "retcode": -100}
-        print(f'当前登录已过期，请重新登陆！返回为：{wallet.text}')
-    else:
-        print(f"你当前拥有免费时长 {wallet.json()['data']['free_time']['free_time']} 分钟，畅玩卡状态为 {wallet.json()['data']['play_card']['short_msg']}，拥有米云币 {wallet.json()['data']['coin']['coin_num']} 枚")
-        res = ses.get(NOTIFICATIONS)
-        signed = False
-        try:
-            if len(res.json()['data']['list']) == 0:
-                signed = True
-                over = False
-            elif json.loads(res.json()['data']['list'][0]['msg']) == {"num": 15, "over_num": 0, "type": 2, "msg": "每日登录奖励", "func_type": 1}:
-                signed = False
-                over = False
-            elif json.loads(res.json()['data']['list'][0]['msg'])['over_num'] > 0:
-                signed = False
-                over = True
-            else:
-                raise RunError(f"签到失败！返回信息如下：{res.text}")
-        except IndexError:
-            raise RunError(f"签到失败！返回信息如下：{res.text}")
-
-        if signed:
+    
+    wallet = ses.get(WALLET).json()
+    if wallet['retcode'] == -100:  # {"data": None,"message": "登录已失效，请重新登录", "retcode": -100}
+        raise RunError(f'当前登录已过期，请重新登陆！返回为：{wallet}')
+    print(f"你当前拥有免费时长 {wallet['data']['free_time']['free_time']} 分钟，畅玩卡状态为 {wallet['data']['play_card']['short_msg']}，拥有米云币 {wallet['data']['coin']['coin_num']} 枚")
+    
+    notices = ses.get(NOTIFICATIONS).json()
+    try:
+        if len(notices['data']['list']) == 0:
             print(f'获取签到情况成功！今天是否已经签到过了呢？')
-            print(f'完整返回体为：{res.text}')
-        elif not signed and over:
-            print(f'获取签到情况成功！当前免费时长已经达到上限！签到情况为{res.json()["data"]["list"][0]["msg"]}')
-            print(f'完整返回体为：{res.text}')
+            print(f'完整返回体为：{notices}')
+            exit(0)
+        elif json.loads(notices['data']['list'][0]['msg']) == {"num": 15, "over_num": 0, "type": 2, "msg": "每日登录奖励", "func_type": 1}:
+            print(f'获取签到情况成功！当前签到情况为{notices["data"]["list"][0]["msg"]}')
+            print(f'完整返回体为：{notices}')
+        elif json.loads(notices['data']['list'][0]['msg'])['over_num'] > 0:
+            print(f'获取签到情况成功！当前免费时长已经达到上限！签到情况为{notices["data"]["list"][0]["msg"]}')
+            print(f'完整返回体为：{notices}')
         else:
-            print(f'获取签到情况成功！当前签到情况为{res.json()["data"]["list"][0]["msg"]}')
-            print(f'完整返回体为：{res.text}')
-        print('正在尝试清除15分钟弹窗……')
-        for popout in res.json()['data']['list']:
-            popid = popout['id']
-            clear_result = ses.post(ACK_NOTIFICATIONS, json={'id': str(popid)})
-            try:
-                if clear_result.status_code == 200 and clear_result.json()['msg'] == 'OK':
-                    print(f'已清除id为{popid}的弹窗！')
-                else:
-                    print(f'清除弹窗失败！返回信息为：{clear_result.json()}')
-            except KeyError as e:
-                print(f'清除弹窗失败！返回信息为：{clear_result.json()}；错误信息为：{e}')
+            raise RunError(f"获取签到信息失败！返回信息如下：{notices}")
+    except IndexError:
+        raise RunError(f"获取签到信息失败！返回信息如下：{notices}")
+
+    print('正在尝试清除15分钟弹窗……')
+    for notice in notices['data']['list']:
+        ack_result = ses.post(ACK_NOTIFICATIONS, json={'id': str(notice['id'])}).json()
+        try:
+            if ack_result['retcode'] == 0:
+                print(f'已清除id为{notice["id"]}的弹窗！')
+            else:
+                print(f'清除弹窗失败！返回信息为：{ack_result}')
+        except KeyError:
+            print(f'清除弹窗失败！返回信息为：{ack_result}')
