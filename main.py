@@ -1,7 +1,10 @@
 import json
 import os
 import base64
+import hmac
+from hashlib import sha256
 
+import yaml
 import rsa
 from requests import Session
 
@@ -26,6 +29,14 @@ VIjnQ98+lMVX1e3+GbJXCiSg5cWUASAKf5AKAaznZsWhgy3KL7ERAgMBAAE=
 key = rsa.PublicKey.load_pkcs1(KEY)
 
 
+def dict2str(query: dict, delimiter: str = ";") -> str:
+    return delimiter.join("=".join(item) for item in query.items())
+
+
+def sign(data: dict, key: str) -> str:
+    return hmac.new(key.encode(), dict2str(data, delimiter="&").encode(), sha256).hexdigest()
+
+
 def login(account: str, password: str, headers):
     ses = Session()
     ses.headers.update(headers)
@@ -41,18 +52,23 @@ def login(account: str, password: str, headers):
     
     ses.post(WEBVERIFY)
 
-    data = ses.post(WEBLOGIN, json={"app_id": 4,"channel_id": 1}).json().get("data")
-
+    data = {"app_id": 4,"channel_id": 1}
+    token_data = ses.post(WEBLOGIN, json=data).json().get("data")
+    data = {
+        "app_id": str(data.get("app_id")), 
+        "channel_id": str(data.get("channel_id")), 
+        "combo_token": token_data.get("combo_token"), 
+        "open_id": token_data.get("open_id")
+    }
     combo_token = {
-        "ai": "4",
-        "ci": "1",
+        "ai": data.get("app_id"),
+        "ci": data.get("channel_id"),
         "oi": data.get("open_id"),
         "ct": data.get("combo_token"),
-        "si": "c7f9c3342e2d17b1e5b02f9dc0831cdc826921759a23f8821e768d0ff100b32a", 
+        "si": sign(data, "d0d3a7342df2026a70f650b907800111"),
         "bi": "hk4e_cn"
     }
-    combo_token = ";".join("=".join(item) for item in combo_token.items())
-    ses.headers.update({"x-rpc-combo_token": combo_token})
+    ses.headers.update({"x-rpc-combo_token": dict2str(combo_token)})
     
     ses.post(LOGIN)
 
@@ -60,8 +76,6 @@ def login(account: str, password: str, headers):
 
 
 def read_yml(variable_name):
-    import yaml
-
     # Try to get the variable from the environment
     env = os.environ.get(variable_name)
     if env:
@@ -93,7 +107,7 @@ class RunError(Exception):
     pass
 
 
-conf = read_json('MHYY_CONFIG')['accounts']
+conf = read_yml('MHYY_CONFIG')['accounts']
 if not conf:
     raise RunError('请正确配置环境变量或者config文件后再运行本脚本！')
 print(f'检测到 {len(conf)} 个账号，正在进行任务……')
