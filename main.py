@@ -1,6 +1,7 @@
 import json
 import os
 import base64
+import uuid
 import hmac
 from hashlib import sha256
 
@@ -10,7 +11,7 @@ from requests import Session
 
 
 LOGINBYPASSWORD = "https://passport-api.mihoyo.com/account/ma-cn-passport/web/loginByPassword"
-WEBVERIFY = "https://passport-api.mihoyo.com/account/ma-cn-session/web/webVerifyForGame"
+WEBVERIFYFORGAME = "https://passport-api.mihoyo.com/account/ma-cn-session/web/webVerifyForGame"
 WEBLOGIN = "https://hk4e-sdk.mihoyo.com/hk4e_cn/combo/granter/login/webLogin"
 LOGIN = "https://api-cloudgame.mihoyo.com/hk4e_cg_cn/gamer/api/login"
 
@@ -37,7 +38,7 @@ def sign(data: dict, key: str) -> str:
     return hmac.new(key.encode(), dict2str(data, delimiter="&").encode(), sha256).hexdigest()
 
 
-def login(account: str, password: str, headers):
+def login(account: str, password: str, headers: dict):
     ses = Session()
     ses.headers.update(headers)
 
@@ -50,7 +51,7 @@ def login(account: str, password: str, headers):
     if resp.json()["retcode"] != 0:
         raise RunError(f"Login failed! Response: {resp.json()}")
     
-    ses.post(WEBVERIFY)
+    ses.post(WEBVERIFYFORGAME)
 
     data = {"app_id": 4,"channel_id": 1}
     token_data = ses.post(WEBLOGIN, json=data).json().get("data")
@@ -75,39 +76,25 @@ def login(account: str, password: str, headers):
     return ses
 
 
-def read_yml(variable_name):
-    # Try to get the variable from the environment
-    env = os.environ.get(variable_name)
-    if env:
-        return yaml.load(env, Loader=yaml.FullLoader)
+def read_env(var_name: str, loader) -> dict:
+    return loader(os.environ.get(var_name))
 
-    # If not found in environment, try to read from config.yml
+
+def read_file(file_name: str, loader):
     try:
-        with open("config.yml", "r", encoding='utf-8') as fp:
-            return yaml.load(fp, Loader=yaml.FullLoader)
+        with open(file_name, encoding='utf-8') as fp:
+            return loader(fp.read())
     except FileNotFoundError:
-        return None
-    
+        return
 
-def read_json(variable_name):
-    # Try to get the variable from the environment
-    env = os.environ.get(variable_name)
-    if env:
-        return json.loads(env)
-
-    # If not found in environment, try to read from config.yml
-    try:
-        with open("config.json", "r", encoding='utf-8') as fp:
-            return json.load(fp)
-    except FileNotFoundError:
-        return None
- 
 
 class RunError(Exception):
     pass
 
 
-conf = read_yml('MHYY_CONFIG')['accounts']
+yaml_loader = lambda yml: yaml.load(yml, Loader=yaml.FullLoader)
+# conf = read_env('MHYY_CONFIG', yaml_loader)['accounts']
+conf = read_file('config.yml', yaml_loader)['accounts']
 if not conf:
     raise RunError('请正确配置环境变量或者config文件后再运行本脚本！')
 print(f'检测到 {len(conf)} 个账号，正在进行任务……')
@@ -117,28 +104,18 @@ for config in conf:
         raise RunError(f"请在Settings->Secrets->Actions填入配置后再运行！")
     account = config['account']
     password = config['password']
-    client_type = config['type']
-    sysver = config['sysver']
-    deviceid = config['deviceid']
-    devicename = config['devicename']
-    devicemodel = config['devicemodel']
-    appid = config['appid']
+    client_type = config.get('type')
+    deviceid = config.get('deviceid')
+    devicename = config.get('devicename')
+    devicemodel = config.get('devicemodel')
     headers = {
         'x-rpc-app_id': 'c76ync6mutq8',
-        'x-rpc-client_type': str(client_type),
-        'x-rpc-sys_version': str(sysver),  # Previous version need to convert the type of this var
-        'x-rpc-channel': 'cyydmihoyo',
-        'x-rpc-device_id': deviceid,
-        'x-rpc-device_name': devicename,
-        'x-rpc-device_model': devicemodel,
-        'x-rpc-vendor_id': '1', # 2023/8/31更新，不知道作用
-        'x-rpc-cg_game_biz': 'hk4e_cn', # 游戏频道，国服就是这个
-        'x-rpc-op_biz': 'clgm_cn',  # 2023/8/31更新，不知道作用
-        'x-rpc-language': 'zh-cn',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0'
+        'x-rpc-client_type': str(client_type) if client_type is not None else '16',
+        'x-rpc-device_id': deviceid if deviceid is not None else str(uuid.uuid4()),
+        'x-rpc-device_name': devicename if devicename is not None else 'Unknown',
+        'x-rpc-device_model': devicemodel if devicemodel is not None else 'Unknown',
     }
     ses = login(str(account), str(password), headers)
-    ses.headers.update(headers)
     
     wallet = ses.get(WALLET).json()
     if wallet['retcode'] == -100:  # {"data": None,"message": "登录已失效，请重新登录", "retcode": -100}
@@ -149,14 +126,11 @@ for config in conf:
     try:
         if len(notices['data']['list']) == 0:
             print(f'获取签到情况成功！今天是否已经签到过了呢？')
-            print(f'完整返回体为：{notices}')
             exit(0)
         elif json.loads(notices['data']['list'][0]['msg']) == {"num": 15, "over_num": 0, "type": 2, "msg": "每日登录奖励", "func_type": 1}:
             print(f'获取签到情况成功！当前签到情况为{notices["data"]["list"][0]["msg"]}')
-            print(f'完整返回体为：{notices}')
         elif json.loads(notices['data']['list'][0]['msg'])['over_num'] > 0:
             print(f'获取签到情况成功！当前免费时长已经达到上限！签到情况为{notices["data"]["list"][0]["msg"]}')
-            print(f'完整返回体为：{notices}')
         else:
             raise RunError(f"获取签到信息失败！返回信息如下：{notices}")
     except IndexError:
